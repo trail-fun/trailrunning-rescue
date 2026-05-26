@@ -15,6 +15,7 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
   const layersRef = useRef<L.Layer[]>([])
   const casualtyMarkerRef = useRef<L.Marker | null>(null)
   const candidateLayersRef = useRef<L.Layer[]>([])
+  const prevCourseIdRef = useRef<string | null>(null)
 
   const { routes, points } = useRaceStore()
   const { mode, activeTool } = useModeStore()
@@ -45,6 +46,18 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
     map.on('click', handler)
     return () => { map.off('click', handler) }
   }, [mode, activeTool, routes, points, onMapClick, setPosition])
+
+  // メインコース読み込み時にfitBounds
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const courseRoute = routes.find(r => r.type === 'course')
+    if (!courseRoute || courseRoute.coords.length < 2) return
+    if (courseRoute.id === prevCourseIdRef.current) return
+    prevCourseIdRef.current = courseRoute.id
+    const bounds = L.latLngBounds(courseRoute.coords.map(c => [c.lat, c.lng] as [number, number]))
+    map.fitBounds(bounds, { padding: [20, 20] })
+  }, [routes])
 
   // ルート・ポイント描画
   useEffect(() => {
