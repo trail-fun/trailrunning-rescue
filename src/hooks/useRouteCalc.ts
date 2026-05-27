@@ -1,6 +1,19 @@
 import { snapToRoute, haversine, elevationStats, interpolateEle } from '../utils/geo'
 import type { LatLng, Route, Point, LatLngEle } from '../types/race'
-import type { RouteCandidate } from '../types/candidate'
+import type { RouteCandidate, CandidateSegment } from '../types/candidate'
+
+function hasRoadSection(routes: Route[], segs: CandidateSegment[]): boolean {
+  for (const seg of segs) {
+    const route = routes.find(r => r.id === seg.routeId)
+    if (!route || route.segments.length === 0) continue
+    const lo = Math.min(seg.fromIndex, seg.toIndex)
+    const hi = Math.max(seg.fromIndex, seg.toIndex)
+    for (const ts of route.segments) {
+      if (ts.terrain === 'road' && ts.startIndex <= hi && ts.endIndex >= lo) return true
+    }
+  }
+  return false
+}
 
 function sliceCoords(coords: LatLngEle[], fromIdx: number, fromRatio: number, toIdx: number, toRatio: number): LatLngEle[] {
   const from: LatLngEle = {
@@ -126,5 +139,7 @@ export function calcCandidates(
     }
   }
 
-  return candidates.sort((a, b) => a.totalDistanceM - b.totalDistanceM)
+  return candidates
+    .filter(c => !hasRoadSection(routes, c.segments))
+    .sort((a, b) => a.totalDistanceM - b.totalDistanceM)
 }
