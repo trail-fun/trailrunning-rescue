@@ -5,7 +5,7 @@ import { useRaceStore } from '../../store/raceStore'
 import { useModeStore } from '../../store/modeStore'
 import { useCasualtyStore } from '../../store/casualtyStore'
 import { calcCandidates } from '../../hooks/useRouteCalc'
-import { POINT_ICONS, ROUTE_STYLES } from './mapStyles'
+import { POINT_ICONS, ROUTE_STYLES, CANDIDATE_COLORS } from './mapStyles'
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png'
 
@@ -109,30 +109,37 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
     casualtyMarkerRef.current = m
   }, [position])
 
-  // 選択候補ハイライト
+  // 全候補ライン（色分け・選択中は太く前面）
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     candidateLayersRef.current.forEach(l => l.remove())
     candidateLayersRef.current = []
-    if (!selectedCandidateId || !position) return
+    if (!position || candidates.length === 0) return
 
-    const cand = candidates.find(c => c.id === selectedCandidateId)
-    if (!cand) return
+    // 非選択を先に描画し、選択中を最後（前面）に
+    const ordered = [
+      ...candidates.map((c, i) => ({ c, i })).filter(({ c }) => c.id !== selectedCandidateId),
+      ...candidates.map((c, i) => ({ c, i })).filter(({ c }) => c.id === selectedCandidateId),
+    ]
 
-    for (const seg of cand.segments) {
-      const route = routes.find(r => r.id === seg.routeId)
-      if (!route) continue
-      const from = Math.min(seg.fromIndex, seg.toIndex)
-      const to = Math.max(seg.fromIndex, seg.toIndex)
-      const slice = route.coords.slice(from, to + 2)
-      const coords = seg.direction === 'backward' ? [...slice].reverse() : slice
-      const line = L.polyline(coords.map(c => [c.lat, c.lng] as [number, number]), {
-        color: '#f97316', weight: 6, opacity: 0.85,
-      }).addTo(map)
-      candidateLayersRef.current.push(line)
+    for (const { c, i } of ordered) {
+      const isSelected = c.id === selectedCandidateId
+      const color = CANDIDATE_COLORS[i % CANDIDATE_COLORS.length]
+      for (const seg of c.segments) {
+        const route = routes.find(r => r.id === seg.routeId)
+        if (!route) continue
+        const from = Math.min(seg.fromIndex, seg.toIndex)
+        const to = Math.max(seg.fromIndex, seg.toIndex)
+        const slice = route.coords.slice(from, to + 2)
+        const coords = seg.direction === 'backward' ? [...slice].reverse() : slice
+        const line = L.polyline(coords.map(c => [c.lat, c.lng] as [number, number]), {
+          color, weight: isSelected ? 7 : 4, opacity: isSelected ? 1.0 : 0.55,
+        }).addTo(map)
+        candidateLayersRef.current.push(line)
+      }
     }
-  }, [selectedCandidateId, candidates, routes, position])
+  }, [candidates, selectedCandidateId, routes, position])
 
   return <div ref={containerRef} style={{ position: 'absolute', inset: 0, zIndex: 0 }} />
 }

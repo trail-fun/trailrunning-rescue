@@ -2,18 +2,20 @@ import { useState } from 'react'
 import { useRaceStore } from '../../store/raceStore'
 import { useCasualtyStore } from '../../store/casualtyStore'
 import { calcCandidates } from '../../hooks/useRouteCalc'
-import { POINT_ICONS } from '../map/mapStyles'
+import { POINT_ICONS, CANDIDATE_COLORS } from '../map/mapStyles'
 import type { RouteCandidate } from '../../types/candidate'
 
-function CandidateCard({ c, selected, onSelect }: { c: RouteCandidate; selected: boolean; onSelect: () => void }) {
+function CandidateCard({ c, color, selected, onSelect }: { c: RouteCandidate; color: string; selected: boolean; onSelect: () => void }) {
   const distKm = (c.totalDistanceM / 1000).toFixed(2)
   const typeIcon = c.exitPointType === 'helipad' ? '🚁' : '🚩'
   return (
     <button
       onClick={onSelect}
-      className={`w-full text-left p-3 rounded-lg border transition ${selected ? 'border-orange-400 bg-orange-50' : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+      className={`w-full text-left p-3 rounded-lg border-2 transition ${selected ? '' : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+      style={selected ? { borderColor: color, backgroundColor: color + '18' } : {}}
     >
-      <div className="flex items-center gap-1 font-semibold text-sm">
+      <div className="flex items-center gap-1.5 font-semibold text-sm">
+        <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: color, flexShrink: 0, display: 'inline-block' }} />
         <span>{typeIcon}</span>
         <span className="truncate">{c.exitPointName}</span>
       </div>
@@ -96,9 +98,10 @@ export default function OperationPanel() {
           <p className="text-xs text-orange-500">候補が見つかりません（コース上100m以内に傷病者位置を指定してください）</p>
         )}
         <div className="flex flex-col gap-2">
-          {candidates.map(c => (
+          {candidates.map((c, i) => (
             <CandidateCard
               key={c.id} c={c}
+              color={CANDIDATE_COLORS[i % CANDIDATE_COLORS.length]}
               selected={selectedCandidateId === c.id}
               onSelect={() => selectCandidate(selectedCandidateId === c.id ? null : c.id)}
             />
