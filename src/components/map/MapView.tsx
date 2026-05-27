@@ -80,7 +80,7 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
         const { lat, lng } = e.latlng
         const newCandidates = calcCandidates({ lat, lng }, routes, points)
         setPosition({ lat, lng }, newCandidates)
-      } else if (activeTool === 'add_point' || activeTool === 'set_segment') {
+      } else if (activeTool === 'add_point' || activeTool === 'set_segment' || activeTool === 'set_junction') {
         onMapClick?.(e.latlng.lat, e.latlng.lng)
       } else if (activeTool === 'draw_route') {
         addDrawingPoint({ lat: e.latlng.lat, lng: e.latlng.lng })

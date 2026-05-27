@@ -38,14 +38,14 @@ export function pointToSegment(p: LatLng, p0: LatLng, p1: LatLng): { dist: numbe
   return { dist: haversine(p, foot), ratio: t, foot }
 }
 
-// GPX座標列に対してスナップ点を求める（100m超は null）
-export function snapToRoute(p: LatLng, coords: LatLng[]): { segmentIndex: number; ratio: number; foot: LatLng; dist: number } | null {
+// GPX座標列に対してスナップ点を求める（maxDist超は null、デフォルト100m）
+export function snapToRoute(p: LatLng, coords: LatLng[], maxDist = 100): { segmentIndex: number; ratio: number; foot: LatLng; dist: number } | null {
   let best: { segmentIndex: number; ratio: number; foot: LatLng; dist: number } | null = null
   for (let i = 0; i < coords.length - 1; i++) {
     const { dist, ratio, foot } = pointToSegment(p, coords[i], coords[i + 1])
     if (!best || dist < best.dist) best = { segmentIndex: i, ratio, foot, dist }
   }
-  if (!best || best.dist > 100) return null
+  if (!best || best.dist > maxDist) return null
   return best
 }
 

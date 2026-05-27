@@ -14,7 +14,7 @@ const POINT_LABELS: Record<PointType, string> = {
 type Props = { pendingLatLng: { lat: number; lng: number } | null; clearPending: () => void }
 
 export default function EditPanel({ pendingLatLng, clearPending }: Props) {
-  const { race, routes, points, setRace, exportToZip, addPoint, updatePoint, deletePoint, addRoute, updateRoute } = useRaceStore()
+  const { race, routes, points, setRace, exportToZip, addPoint, updatePoint, deletePoint, addRoute, updateRoute, setJunction } = useRaceStore()
   const { activeTool, setActiveTool } = useModeStore()
   const { routeType: drawingRouteType, points: drawingPoints, startDrawing, removeLastPoint, clearDrawing } = useDrawingStore()
   const escGpxRef = useRef<HTMLInputElement>(null)
@@ -27,6 +27,30 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
   const [terrainStep, setTerrainStep] = useState<'start' | 'end' | null>(null)
   const terrainStartIdxRef = useRef<number | null>(null)
   const [terrainDialogIndices, setTerrainDialogIndices] = useState<{ si: number; ei: number } | null>(null)
+
+  // 分岐点設定ツール
+  const [junctionRouteId, setJunctionRouteId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!pendingLatLng || activeTool !== 'set_junction' || !junctionRouteId) return
+    const mainRoute = routes.find(r => r.type === 'course')
+    if (!mainRoute) { clearPending(); return }
+    // 分岐点設定はズームに依らず確実にスナップできるよう閾値を広げる
+    const snap = snapToRoute(pendingLatLng, mainRoute.coords, 5000)
+    if (!snap) { clearPending(); return }
+    setJunction(junctionRouteId, {
+      routeId: mainRoute.id,
+      lat: snap.foot.lat,
+      lng: snap.foot.lng,
+      segmentIndex: snap.segmentIndex,
+      ratio: snap.ratio,
+      note: '',
+    })
+    setJunctionRouteId(null)
+    clearPending()
+    setActiveTool('none')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLatLng])
 
   // 手描きツール
   const [drawingName, setDrawingName] = useState('')
@@ -170,15 +194,41 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
       {/* ルート */}
       <section>
         <div className="text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">▼ ルート</div>
+        {/* 分岐点設定中のヒント */}
+        {junctionRouteId && activeTool === 'set_junction' && (
+          <p className="text-xs text-amber-600 font-semibold mb-1">
+            🟡 メインコース上をクリックして分岐点を設定
+            <button onClick={() => { setJunctionRouteId(null); setActiveTool('none') }}
+              className="ml-2 text-gray-400 hover:text-gray-600 font-normal">キャンセル</button>
+          </p>
+        )}
+
         {routes.map(r => (
-          <div key={r.id} className="text-sm py-1 flex items-center gap-1">
-            <span className={r.type === 'course' ? 'text-green-600' : r.type === 'escape' ? 'text-blue-600' : 'text-gray-400'}>
-              {r.type === 'course' ? '🟢' : r.type === 'escape' ? '🔵' : '⚫'}
-            </span>
-            <span className="flex-1 truncate">{r.name}</span>
-            <span className="text-xs text-gray-400">
-              {r.type === 'course' ? 'メイン' : r.type === 'escape' ? 'エスケープ' : '車道'}
-            </span>
+          <div key={r.id}>
+            <div className="text-sm py-1 flex items-center gap-1">
+              <span className={r.type === 'course' ? 'text-green-600' : r.type === 'escape' ? 'text-blue-600' : 'text-gray-400'}>
+                {r.type === 'course' ? '🟢' : r.type === 'escape' ? '🔵' : '⚫'}
+              </span>
+              <span className="flex-1 truncate">{r.name}</span>
+              <span className="text-xs text-gray-400">
+                {r.type === 'course' ? 'メイン' : r.type === 'escape' ? 'エスケープ' : '車道'}
+              </span>
+            </div>
+            {r.type === 'escape' && (
+              <div className="ml-5 mb-1 flex items-center gap-1 text-xs">
+                <span className={r.junction ? 'text-amber-600' : 'text-gray-400'}>
+                  {r.junction ? '🟡 分岐点設定済み' : '⚪ 分岐点未設定'}
+                </span>
+                <button
+                  onClick={() => { setJunctionRouteId(r.id); setActiveTool('set_junction') }}
+                  className="ml-auto text-blue-500 hover:text-blue-700"
+                >{r.junction ? '変更' : '設定'}</button>
+                {r.junction && (
+                  <button onClick={() => updateRoute(r.id, { junction: null })}
+                    className="text-gray-400 hover:text-red-500">🗑</button>
+                )}
+              </div>
+            )}
           </div>
         ))}
 
