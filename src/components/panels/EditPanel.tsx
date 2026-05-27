@@ -3,12 +3,12 @@ import { useRaceStore } from '../../store/raceStore'
 import { useModeStore } from '../../store/modeStore'
 import { useDrawingStore } from '../../store/drawingStore'
 import { parseGpx } from '../../utils/gpxParser'
-import { snapToRoute, fetchElevation } from '../../utils/geo'
+import { snapToRoute, fetchElevation, haversine } from '../../utils/geo'
 import type { PointType, Route, Terrain, Segment, LatLngEle } from '../../types/race'
 import { POINT_ICONS } from '../map/mapStyles'
 
 const POINT_LABELS: Record<PointType, string> = {
-  exit: '下山口', helipad: 'ヘリポート', aid: 'エイド', parking: '駐車場', custom: 'カスタム',
+  exit: '下山口', helipad: 'ヘリポート', aid: 'エイド', parking: '駐車場', danger: '危険箇所', custom: 'カスタム',
 }
 
 type Props = { pendingLatLng: { lat: number; lng: number } | null; clearPending: () => void }
@@ -19,8 +19,10 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
   const { routeType: drawingRouteType, points: drawingPoints, startDrawing, removeLastPoint, clearDrawing } = useDrawingStore()
   const escGpxRef = useRef<HTMLInputElement>(null)
   const roadGpxRef = useRef<HTMLInputElement>(null)
+  const newPointPhotoRef = useRef<HTMLInputElement>(null)
+  const editPointPhotoRef = useRef<HTMLInputElement>(null)
 
-  const [newPoint, setNewPoint] = useState<{ type: PointType; name: string; note: string } | null>(null)
+  const [newPoint, setNewPoint] = useState<{ type: PointType; name: string; note: string; photos: string[] } | null>(null)
   const [editPointId, setEditPointId] = useState<string | null>(null)
 
   // 区間設定ツール
@@ -93,7 +95,7 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
 
   // ポイント追加ダイアログ（地図クリック後）
   if (pendingLatLng && !newPoint && activeTool === 'add_point') {
-    setNewPoint({ type: 'exit', name: '', note: '' })
+    setNewPoint({ type: 'exit', name: '', note: '', photos: [] })
   }
 
   // 区間設定（地図クリック後）
@@ -124,9 +126,31 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
     if (!mainRoute || !terrainDialogIndices) return
     const { si, ei } = terrainDialogIndices
     const newSeg: Segment = { startIndex: si, endIndex: ei, terrain, name: terrain === 'trail' ? 'トレイル' : 'ロード' }
-    // 重複範囲の既存セグメントを除いて追加
     const filtered = mainRoute.segments.filter(s => s.endIndex < si || s.startIndex > ei)
-    updateRoute(mainRoute.id, { segments: [...filtered, newSeg] })
+    const allSegs = [...filtered, newSeg]
+    updateRoute(mainRoute.id, { segments: allSegs })
+
+    // トレイル/ロード境界に自動で下山口ポイントを作成
+    const coords = mainRoute.coords
+    const tmap: Terrain[] = new Array(coords.length).fill('trail')
+    for (const s of allSegs) {
+      for (let i = s.startIndex; i <= Math.min(s.endIndex, coords.length - 1); i++) tmap[i] = s.terrain
+    }
+    for (let i = 1; i < tmap.length; i++) {
+      if (tmap[i] !== tmap[i - 1]) {
+        const coord = coords[i]
+        const nearby = points.some(p =>
+          (p.type === 'exit' || p.type === 'helipad') &&
+          haversine({ lat: p.lat, lng: p.lng }, coord) < 200
+        )
+        if (!nearby) {
+          addPoint({
+            id: crypto.randomUUID(), lat: coord.lat, lng: coord.lng,
+            type: 'exit', name: '下山口（自動）', note: 'トレイル/ロード境界', enabled: true, photos: [],
+          })
+        }
+      }
+    }
     setTerrainDialogIndices(null)
   }
 
@@ -145,6 +169,30 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
     setNewPoint(null)
     clearPending()
     setActiveTool('none')
+  }
+
+  // 写真ハンドラ
+  const readPhotos = (files: FileList): Promise<string[]> =>
+    Promise.all(Array.from(files).map(f => new Promise<string>(res => {
+      const reader = new FileReader()
+      reader.onload = e => res(e.target?.result as string)
+      reader.readAsDataURL(f)
+    })))
+
+  const handleNewPointPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !newPoint) return
+    const added = await readPhotos(e.target.files)
+    setNewPoint({ ...newPoint, photos: [...newPoint.photos, ...added] })
+    e.target.value = ''
+  }
+
+  const handleEditPointPhotos = async (e: React.ChangeEvent<HTMLInputElement>, ptId: string) => {
+    if (!e.target.files) return
+    const added = await readPhotos(e.target.files)
+    const pt = points.find(p => p.id === ptId)
+    if (!pt) return
+    updatePoint(ptId, { photos: [...(pt.photos ?? []), ...added] })
+    e.target.value = ''
   }
 
   const handleEscGpx = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -368,27 +416,45 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
 
       {/* ポイント追加ダイアログ */}
       {newPoint && pendingLatLng && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-80 flex flex-col gap-3">
-            <div className="font-bold text-gray-800">ポイントを追加</div>
-            <div className="text-xs text-gray-500">位置: {pendingLatLng.lat.toFixed(5)}, {pendingLatLng.lng.toFixed(5)}</div>
-            <select className="border rounded px-2 py-1 text-sm"
-              value={newPoint.type} onChange={e => setNewPoint({ ...newPoint, type: e.target.value as PointType })}>
-              {(Object.keys(POINT_LABELS) as PointType[]).map(t => (
-                <option key={t} value={t}>{POINT_ICONS[t]} {POINT_LABELS[t]}</option>
-              ))}
-            </select>
-            <input className="border rounded px-2 py-1 text-sm" placeholder="名前（必須）"
-              value={newPoint.name} onChange={e => setNewPoint({ ...newPoint, name: e.target.value })} />
-            <input className="border rounded px-2 py-1 text-sm" placeholder="備考（任意）"
-              value={newPoint.note} onChange={e => setNewPoint({ ...newPoint, note: e.target.value })} />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => { setNewPoint(null); clearPending() }} className="text-sm px-4 py-1.5 border rounded hover:bg-gray-50">キャンセル</button>
-              <button onClick={saveNewPoint} disabled={!newPoint.name.trim()}
-                className="text-sm px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-40">追加</button>
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-80 flex flex-col gap-3 max-h-[90vh] overflow-y-auto">
+              <div className="font-bold text-gray-800">ポイントを追加</div>
+              <div className="text-xs text-gray-500">位置: {pendingLatLng.lat.toFixed(5)}, {pendingLatLng.lng.toFixed(5)}</div>
+              <select className="border rounded px-2 py-1 text-sm"
+                value={newPoint.type} onChange={e => setNewPoint({ ...newPoint, type: e.target.value as PointType })}>
+                {(Object.keys(POINT_LABELS) as PointType[]).map(t => (
+                  <option key={t} value={t}>{POINT_ICONS[t]} {POINT_LABELS[t]}</option>
+                ))}
+              </select>
+              <input className="border rounded px-2 py-1 text-sm" placeholder="名前（必須）"
+                value={newPoint.name} onChange={e => setNewPoint({ ...newPoint, name: e.target.value })} />
+              <input className="border rounded px-2 py-1 text-sm" placeholder="備考（任意）"
+                value={newPoint.note} onChange={e => setNewPoint({ ...newPoint, note: e.target.value })} />
+              {/* 写真 */}
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">写真</label>
+                <input ref={newPointPhotoRef} type="file" accept="image/*" multiple className="hidden" onChange={handleNewPointPhotos} />
+                <button onClick={() => newPointPhotoRef.current?.click()}
+                  className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded">📷 写真を追加</button>
+                {newPoint.photos.length > 0 && (
+                  <div className="flex gap-1 flex-wrap mt-1">
+                    {newPoint.photos.map((ph, i) => (
+                      <div key={i} className="relative">
+                        <img src={ph} className="w-14 h-14 object-cover rounded" />
+                        <button onClick={() => setNewPoint({ ...newPoint, photos: newPoint.photos.filter((_, j) => j !== i) })}
+                          className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => { setNewPoint(null); clearPending() }} className="text-sm px-4 py-1.5 border rounded hover:bg-gray-50">キャンセル</button>
+                <button onClick={saveNewPoint} disabled={!newPoint.name.trim()}
+                  className="text-sm px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-40">追加</button>
+              </div>
             </div>
           </div>
-        </div>
       )}
 
       {/* 区間種別選択ダイアログ */}
@@ -414,24 +480,44 @@ export default function EditPanel({ pendingLatLng, clearPending }: Props) {
 
       {/* ポイント編集ダイアログ */}
       {editPt && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-80 flex flex-col gap-3">
-            <div className="font-bold text-gray-800">ポイントを編集</div>
-            <select className="border rounded px-2 py-1 text-sm"
-              value={editPt.type} onChange={e => updatePoint(editPt.id, { type: e.target.value as PointType })}>
-              {(Object.keys(POINT_LABELS) as PointType[]).map(t => (
-                <option key={t} value={t}>{POINT_ICONS[t]} {POINT_LABELS[t]}</option>
-              ))}
-            </select>
-            <input className="border rounded px-2 py-1 text-sm" placeholder="名前"
-              value={editPt.name} onChange={e => updatePoint(editPt.id, { name: e.target.value })} />
-            <input className="border rounded px-2 py-1 text-sm" placeholder="備考"
-              value={editPt.note} onChange={e => updatePoint(editPt.id, { note: e.target.value })} />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setEditPointId(null)} className="text-sm px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-500">閉じる</button>
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-80 flex flex-col gap-3 max-h-[90vh] overflow-y-auto">
+              <div className="font-bold text-gray-800">ポイントを編集</div>
+              <select className="border rounded px-2 py-1 text-sm"
+                value={editPt.type} onChange={e => updatePoint(editPt.id, { type: e.target.value as PointType })}>
+                {(Object.keys(POINT_LABELS) as PointType[]).map(t => (
+                  <option key={t} value={t}>{POINT_ICONS[t]} {POINT_LABELS[t]}</option>
+                ))}
+              </select>
+              <input className="border rounded px-2 py-1 text-sm" placeholder="名前"
+                value={editPt.name} onChange={e => updatePoint(editPt.id, { name: e.target.value })} />
+              <input className="border rounded px-2 py-1 text-sm" placeholder="備考"
+                value={editPt.note} onChange={e => updatePoint(editPt.id, { note: e.target.value })} />
+              {/* 写真 */}
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">写真</label>
+                <input ref={editPointPhotoRef} type="file" accept="image/*" multiple className="hidden"
+                  onChange={e => handleEditPointPhotos(e, editPt.id)} />
+                <button onClick={() => editPointPhotoRef.current?.click()}
+                  className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded">📷 写真を追加</button>
+                {(editPt.photos ?? []).length > 0 && (
+                  <div className="flex gap-1 flex-wrap mt-1">
+                    {(editPt.photos ?? []).map((ph, i) => (
+                      <div key={i} className="relative">
+                        <img src={ph} className="w-14 h-14 object-cover rounded" />
+                        <button
+                          onClick={() => updatePoint(editPt.id, { photos: (editPt.photos ?? []).filter((_, j) => j !== i) })}
+                          className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setEditPointId(null)} className="text-sm px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-500">閉じる</button>
+              </div>
             </div>
           </div>
-        </div>
       )}
     </div>
   )

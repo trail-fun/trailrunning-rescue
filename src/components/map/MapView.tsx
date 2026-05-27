@@ -61,6 +61,7 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
   const { position, selectedCandidateId, setPosition, candidates } = useCasualtyStore()
   const { routeType: drawingRouteType, points: drawingPoints, addPoint: addDrawingPoint } = useDrawingStore()
   const drawingLayersRef = useRef<L.Layer[]>([])
+  const vertexLayersRef = useRef<L.Layer[]>([])
 
   // 地図初期化
   useEffect(() => {
@@ -195,6 +196,35 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
       }
     }
   }, [candidates, selectedCandidateId, routes, position])
+
+  // 頂点マーカー（編集モードのみ、ドラッグで座標更新）
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    vertexLayersRef.current.forEach(l => l.remove())
+    vertexLayersRef.current = []
+    if (mode !== 'edit') return
+
+    for (const route of routes) {
+      const color = route.type === 'course' ? '#16a34a' : route.type === 'escape' ? '#2563eb' : '#6b7280'
+      route.coords.forEach((coord, i) => {
+        const icon = L.divIcon({
+          html: `<div style="width:8px;height:8px;background:white;border:2px solid ${color};border-radius:50%;cursor:move;"></div>`,
+          iconSize: [8, 8], iconAnchor: [4, 4], className: '',
+        })
+        const m = L.marker([coord.lat, coord.lng], { icon, draggable: true }).addTo(map)
+        const routeId = route.id
+        m.on('dragend', () => {
+          const { lat, lng } = (m as L.Marker).getLatLng()
+          const cur = useRaceStore.getState().routes.find(r => r.id === routeId)
+          if (!cur) return
+          const newCoords = cur.coords.map((c, j) => j === i ? { ...c, lat, lng } : c)
+          useRaceStore.getState().updateRoute(routeId, { coords: newCoords })
+        })
+        vertexLayersRef.current.push(m)
+      })
+    }
+  }, [routes, mode])
 
   // 手描きプレビュー
   useEffect(() => {

@@ -1,7 +1,7 @@
 export type LatLng = { lat: number; lng: number }
 export type LatLngEle = LatLng & { ele: number }
 
-export type PointType = 'exit' | 'helipad' | 'aid' | 'parking' | 'custom'
+export type PointType = 'exit' | 'helipad' | 'aid' | 'parking' | 'danger' | 'custom'
 
 export type Point = {
   id: string
@@ -11,6 +11,7 @@ export type Point = {
   lng: number
   note: string
   enabled: boolean
+  photos: string[] // data URLs
 }
 
 export type Terrain = 'trail' | 'road'

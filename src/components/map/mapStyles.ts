@@ -6,6 +6,7 @@ export const POINT_ICONS: Record<PointType, string> = {
   helipad: '🚁',
   aid: '🏕️',
   parking: '🅿️',
+  danger: '⚠️',
   custom: '📍',
 }
 
