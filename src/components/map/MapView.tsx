@@ -130,28 +130,32 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
     layersRef.current.forEach(l => l.remove())
     layersRef.current = []
 
+    // 候補表示中はベースルートを薄くして候補ラインを目立たせる
+    const dimmed = position !== null && candidates.length > 0
+    const baseOpacity = dimmed ? 0.2 : 1.0
+
     for (const route of routes) {
       if (route.coords.length < 2) continue
 
       if (route.type === 'course') {
-        // トレイル/ロードで色分け
         for (const run of getTerrainRuns(route.coords, route.segments)) {
-          const line = L.polyline(run.coords.map(c => [c.lat, c.lng] as [number, number]), TERRAIN_STYLES[run.terrain]).addTo(map)
-          line.bindTooltip(`${route.name}（${run.terrain === 'trail' ? 'トレイル' : 'ロード'}）`, { sticky: true })
+          const style = { ...TERRAIN_STYLES[run.terrain], opacity: TERRAIN_STYLES[run.terrain].opacity! * baseOpacity }
+          const line = L.polyline(run.coords.map(c => [c.lat, c.lng] as [number, number]), style).addTo(map)
+          if (!dimmed) line.bindTooltip(`${route.name}（${run.terrain === 'trail' ? 'トレイル' : 'ロード'}）`, { sticky: true })
           layersRef.current.push(line)
         }
       } else {
         const latlngs = route.coords.map(c => [c.lat, c.lng] as [number, number])
-        const style = ROUTE_STYLES[route.type]
+        const style = { ...ROUTE_STYLES[route.type], opacity: ROUTE_STYLES[route.type].opacity! * baseOpacity }
         const line = L.polyline(latlngs, style).addTo(map)
-        line.bindTooltip(route.name, { sticky: true })
+        if (!dimmed) line.bindTooltip(route.name, { sticky: true })
         layersRef.current.push(line)
 
         if (route.junction) {
           const m = L.circleMarker([route.junction.lat, route.junction.lng], {
-            radius: 6, color: '#f59e0b', fillColor: '#fbbf24', fillOpacity: 1, weight: 2,
+            radius: 6, color: '#f59e0b', fillColor: '#fbbf24', fillOpacity: dimmed ? 0.2 : 1, weight: 2,
           }).addTo(map)
-          m.bindTooltip(`分岐: ${route.name}`)
+          if (!dimmed) m.bindTooltip(`分岐: ${route.name}`)
           layersRef.current.push(m)
         }
       }
@@ -159,14 +163,14 @@ export default function MapView({ onMapClick }: { onMapClick?: (lat: number, lng
 
     for (const pt of points) {
       const icon = L.divIcon({
-        html: `<div style="font-size:22px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));${!pt.enabled ? 'opacity:0.35' : ''}">${POINT_ICONS[pt.type]}</div>`,
+        html: `<div style="font-size:22px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));opacity:${!pt.enabled ? 0.35 : dimmed ? 0.3 : 1}">${POINT_ICONS[pt.type]}</div>`,
         iconSize: [28, 28], iconAnchor: [14, 14], className: '',
       })
       const marker = L.marker([pt.lat, pt.lng], { icon }).addTo(map)
-      marker.bindPopup(`<b>${pt.name}</b><br><span style="font-size:11px">${pt.note || ''}</span>`)
+      if (!dimmed) marker.bindPopup(`<b>${pt.name}</b><br><span style="font-size:11px">${pt.note || ''}</span>`)
       layersRef.current.push(marker)
     }
-  }, [routes, points])
+  }, [routes, points, position, candidates])
 
   // 傷病者マーカー
   useEffect(() => {
