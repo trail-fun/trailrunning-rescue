@@ -24,74 +24,68 @@ function computeEffectiveSegments(segments: Segment[], coordCount: number): { st
   return result
 }
 
-// ─── 高低図モーダル ──────────────────────────────────────────────────────────
+// ─── 比較高低図モーダル ──────────────────────────────────────────────────────
 
-function ElevationProfileModal({
-  candidate, points, onClose,
-}: { candidate: RouteCandidate; points: Point[]; onClose: () => void }) {
-  const [selectedMarkerIdx, setSelectedMarkerIdx] = useState<number | null>(null)
+function ElevationCompareModal({
+  candidates, points, colors, onClose,
+}: { candidates: RouteCandidate[]; points: Point[]; colors: string[]; onClose: () => void }) {
+  const [selectedInfo, setSelectedInfo] = useState<{ label: string; note: string; icon: string } | null>(null)
 
-  const { pathCoords } = candidate
-  if (!pathCoords || pathCoords.length < 2) return null
-
-  const dists: number[] = [0]
-  for (let i = 1; i < pathCoords.length; i++) {
-    dists.push(dists[i - 1] + haversine(pathCoords[i - 1], pathCoords[i]))
+  type CandidateData = {
+    c: RouteCandidate; color: string
+    dists: number[]; totalDist: number; eles: number[]
   }
-  const totalDist = dists[dists.length - 1]
 
-  const eles = pathCoords.map(c => c.ele)
-  const hasEle = eles.some(e => e !== 0)
-  const minEle = hasEle ? Math.min(...eles) : 0
-  const maxEle = hasEle ? Math.max(...eles) : 100
+  const data: CandidateData[] = candidates
+    .filter(c => c.pathCoords && c.pathCoords.length >= 2)
+    .map((c, i) => {
+      const pc = c.pathCoords!
+      const dists: number[] = [0]
+      for (let j = 1; j < pc.length; j++) dists.push(dists[j - 1] + haversine(pc[j - 1], pc[j]))
+      return { c, color: colors[i], dists, totalDist: dists[dists.length - 1], eles: pc.map(p => p.ele) }
+    })
+
+  if (data.length === 0) return null
+
+  const allEles = data.flatMap(d => d.eles)
+  const hasEle = allEles.some(e => e !== 0)
+  const minEle = hasEle ? Math.min(...allEles) : 0
+  const maxEle = hasEle ? Math.max(...allEles) : 100
   const eleRange = Math.max(maxEle - minEle, 10)
+  const maxDist = Math.max(...data.map(d => d.totalDist))
 
-  const W = 360, H = 190
+  const W = 400, H = 210
   const PAD = { t: 32, b: 28, l: 42, r: 14 }
   const cW = W - PAD.l - PAD.r
   const cH = H - PAD.t - PAD.b
 
-  const toX = (d: number) => PAD.l + (totalDist > 0 ? d / totalDist : 0) * cW
+  const toX = (d: number) => PAD.l + (maxDist > 0 ? d / maxDist : 0) * cW
   const toY = (e: number) => PAD.t + (1 - (e - minEle) / eleRange) * cH
-
-  const linePts = pathCoords.map((c, i) => `${toX(dists[i])},${toY(c.ele)}`).join(' ')
-  const areaPts = `${toX(0)},${PAD.t + cH} ${linePts} ${toX(totalDist)},${PAD.t + cH}`
-
-  type Marker = { icon: string; dist: number; ele: number; label: string; note: string }
-  const markers: Marker[] = []
-
-  // 傷病者（始点、常に表示）
-  markers.push({ icon: '🚨', dist: 0, ele: eles[0], label: '傷病者', note: '' })
-
-  // 下山口ゴール（終点、常に表示）
-  const exitPt = points.find(p => p.id === candidate.exitPointId)
-  if (exitPt) {
-    markers.push({ icon: POINT_ICONS[exitPt.type], dist: totalDist, ele: eles[eles.length - 1], label: exitPt.name, note: exitPt.note })
-  }
-
-  // ルート線上にあるポイント（ゴール以外、30m 以内）
-  for (const pt of points) {
-    if (!pt.enabled || pt.id === candidate.exitPointId) continue
-    const snap = snapToRoute(pt, pathCoords, 30)
-    if (!snap) continue
-    const si = snap.segmentIndex
-    const ni = Math.min(si + 1, pathCoords.length - 1)
-    const snapDist = dists[si] + snap.ratio * haversine(pathCoords[si], pathCoords[ni])
-    const snapEle = pathCoords[si].ele + snap.ratio * (pathCoords[ni].ele - pathCoords[si].ele)
-    markers.push({ icon: POINT_ICONS[pt.type], dist: snapDist, ele: snapEle, label: pt.name, note: pt.note })
-  }
-  markers.sort((a, b) => a.dist - b.dist)
-
   const yTicks = [minEle, (minEle + maxEle) / 2, maxEle]
-  const sel = selectedMarkerIdx !== null ? markers[selectedMarkerIdx] : null
+
+  // ルート上ポイント（全候補共通の始点ポイント群）
+  type RouteMarker = { icon: string; dist: number; ele: number; label: string; note: string; di: number }
+  const routeMarkers: RouteMarker[] = []
+  data.forEach((d, di) => {
+    for (const pt of points) {
+      if (!pt.enabled || pt.id === d.c.exitPointId) continue
+      const snap = snapToRoute(pt, d.c.pathCoords!, 30)
+      if (!snap) continue
+      const si = snap.segmentIndex
+      const ni = Math.min(si + 1, d.c.pathCoords!.length - 1)
+      const snapDist = d.dists[si] + snap.ratio * haversine(d.c.pathCoords![si], d.c.pathCoords![ni])
+      const snapEle = d.c.pathCoords![si].ele + snap.ratio * (d.c.pathCoords![ni].ele - d.c.pathCoords![si].ele)
+      routeMarkers.push({ icon: POINT_ICONS[pt.type], dist: snapDist, ele: snapEle, label: pt.name, note: pt.note, di })
+    }
+  })
+
+  const startEle = data[0].eles[0]
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col gap-3 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col gap-3 p-4">
         <div className="flex items-center justify-between">
-          <div className="font-bold text-gray-800 text-sm">
-            高低図 — {candidate.exitPointType === 'helipad' ? '🚁' : '🚩'} {candidate.exitPointName}
-          </div>
+          <div className="font-bold text-gray-800 text-sm">📈 高低図比較</div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
         </div>
 
@@ -107,40 +101,81 @@ function ElevationProfileModal({
             ))}
             <line x1={PAD.l} y1={PAD.t + cH} x2={PAD.l + cW} y2={PAD.t + cH} stroke="#d1d5db" strokeWidth="1" />
             <text x={PAD.l} y={H - 4} fontSize="9" fill="#9ca3af">0</text>
-            <text x={PAD.l + cW} y={H - 4} textAnchor="end" fontSize="9" fill="#9ca3af">{(totalDist / 1000).toFixed(2)} km</text>
-            <polygon points={areaPts} fill="rgba(220,38,38,0.12)" />
-            <polyline points={linePts} fill="none" stroke="#dc2626" strokeWidth="2" strokeLinejoin="round" />
-            {markers.map((m, mi) => {
-              const mx = toX(m.dist)
-              const my = toY(m.ele)
-              const above = my > PAD.t + cH * 0.55
-              const isSelected = selectedMarkerIdx === mi
+            <text x={PAD.l + cW} y={H - 4} textAnchor="end" fontSize="9" fill="#9ca3af">{(maxDist / 1000).toFixed(2)} km</text>
+            <text x={12} y={PAD.t + cH / 2} textAnchor="middle" fontSize="9" fill="#9ca3af"
+              transform={`rotate(-90,12,${PAD.t + cH / 2})`}>標高(m)</text>
+
+            {/* 各候補ライン */}
+            {data.map((d, di) => {
+              const linePts = d.c.pathCoords!.map((p, j) => `${toX(d.dists[j])},${toY(p.ele)}`).join(' ')
+              const areaPts = `${toX(0)},${PAD.t + cH} ${linePts} ${toX(d.totalDist)},${PAD.t + cH}`
+              const ex = toX(d.totalDist)
+              const ey = toY(d.eles[d.eles.length - 1])
+              const exitPt = points.find(p => p.id === d.c.exitPointId)
               return (
-                <g key={mi} style={{ cursor: 'pointer' }}
-                  onClick={() => setSelectedMarkerIdx(isSelected ? null : mi)}>
-                  <line x1={mx} y1={PAD.t} x2={mx} y2={PAD.t + cH} stroke="#6b7280" strokeWidth="1" strokeDasharray="3,2" opacity="0.5" />
-                  <circle cx={mx} cy={my} r={isSelected ? 5 : 3.5} fill={isSelected ? '#dbeafe' : 'white'} stroke={isSelected ? '#2563eb' : '#374151'} strokeWidth="1.5" />
-                  <text x={mx} y={above ? my - 6 : my + 17} textAnchor="middle" fontSize="13" style={{ userSelect: 'none' }}>{m.icon}</text>
+                <g key={di}>
+                  <polygon points={areaPts} fill={d.color} fillOpacity="0.1" />
+                  <polyline points={linePts} fill="none" stroke={d.color} strokeWidth="2" strokeLinejoin="round" />
+                  {/* ゴールマーカー */}
+                  <g style={{ cursor: 'pointer' }}
+                    onClick={() => setSelectedInfo(selectedInfo?.label === d.c.exitPointName ? null : {
+                      icon: d.c.exitPointType === 'helipad' ? '🚁' : '🚩',
+                      label: d.c.exitPointName,
+                      note: exitPt?.note ?? '',
+                    })}>
+                    <circle cx={ex} cy={ey} r={5} fill={d.color} stroke="white" strokeWidth="1.5" />
+                    <text x={ex} y={ey > PAD.t + cH * 0.55 ? ey - 7 : ey + 18} textAnchor="middle" fontSize="12" style={{ userSelect: 'none' }}>
+                      {d.c.exitPointType === 'helipad' ? '🚁' : '🚩'}
+                    </text>
+                  </g>
                 </g>
               )
             })}
-            <text x={12} y={PAD.t + cH / 2} textAnchor="middle" fontSize="9" fill="#9ca3af"
-              transform={`rotate(-90,12,${PAD.t + cH / 2})`}>標高(m)</text>
+
+            {/* ルート上ポイントマーカー */}
+            {routeMarkers.map((m, mi) => {
+              const mx = toX(m.dist)
+              const my = toY(m.ele)
+              const above = my > PAD.t + cH * 0.55
+              return (
+                <g key={mi} style={{ cursor: 'pointer' }}
+                  onClick={() => setSelectedInfo(selectedInfo?.label === m.label ? null : { icon: m.icon, label: m.label, note: m.note })}>
+                  <circle cx={mx} cy={my} r={3.5} fill="white" stroke={data[m.di].color} strokeWidth="1.5" />
+                  <text x={mx} y={above ? my - 6 : my + 17} textAnchor="middle" fontSize="12" style={{ userSelect: 'none' }}>{m.icon}</text>
+                </g>
+              )
+            })}
+
+            {/* 傷病者（共通始点） */}
+            <g style={{ cursor: 'pointer' }}
+              onClick={() => setSelectedInfo(selectedInfo?.label === '傷病者' ? null : { icon: '🚨', label: '傷病者', note: '' })}>
+              <circle cx={toX(0)} cy={toY(startEle)} r={4} fill="white" stroke="#374151" strokeWidth="1.5" />
+              <text x={toX(0)} y={toY(startEle) - 7} textAnchor="middle" fontSize="13" style={{ userSelect: 'none' }}>🚨</text>
+            </g>
           </svg>
         )}
 
-        {/* マーカー選択時ポップアップ */}
-        {sel && (
+        {/* マーカーポップアップ */}
+        {selectedInfo && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs">
-            <div className="font-semibold text-gray-800">{sel.icon} {sel.label}</div>
-            {sel.note && <div className="text-gray-500 mt-0.5">{sel.note}</div>}
+            <div className="font-semibold text-gray-800">{selectedInfo.icon} {selectedInfo.label}</div>
+            {selectedInfo.note && <div className="text-gray-500 mt-0.5">{selectedInfo.note}</div>}
           </div>
         )}
 
-        <div className="flex gap-4 text-xs font-mono text-gray-600 border-t pt-2">
-          <span>📏 {(totalDist / 1000).toFixed(2)} km</span>
-          <span className="text-blue-600">↓ {Math.round(candidate.totalDescentM)} m</span>
-          {candidate.totalAscentM > 0 && <span className="text-red-500">↑ {Math.round(candidate.totalAscentM)} m</span>}
+        {/* 凡例 */}
+        <div className="flex flex-col gap-1 border-t pt-2">
+          {data.map((d, di) => (
+            <div key={di} className="flex items-center gap-2 text-xs">
+              <span style={{ width: 20, height: 3, backgroundColor: d.color, display: 'inline-block', borderRadius: 2, flexShrink: 0 }} />
+              <span className="truncate flex-1 text-gray-700">
+                {d.c.exitPointType === 'helipad' ? '🚁' : '🚩'} {d.c.exitPointName}
+                <span className="text-gray-400 ml-1 text-[10px]">{d.c.label}</span>
+              </span>
+              <span className="font-mono text-gray-600 whitespace-nowrap">📏 {(d.totalDist / 1000).toFixed(2)} km</span>
+              <span className="font-mono text-blue-600 whitespace-nowrap">↓ {Math.round(d.c.totalDescentM)} m</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -150,8 +185,8 @@ function ElevationProfileModal({
 // ─── 候補カード ──────────────────────────────────────────────────────────────
 
 function CandidateCard({
-  c, color, selected, onSelect, onShowChart,
-}: { c: RouteCandidate; color: string; selected: boolean; onSelect: () => void; onShowChart: () => void }) {
+  c, color, selected, onSelect,
+}: { c: RouteCandidate; color: string; selected: boolean; onSelect: () => void }) {
   const distKm = (c.totalDistanceM / 1000).toFixed(2)
   const typeIcon = c.exitPointType === 'helipad' ? '🚁' : '🚩'
   return (
@@ -182,12 +217,6 @@ function CandidateCard({
         <span className={`text-xs px-1.5 py-0.5 rounded ${c.difficulty === 'low' ? 'bg-green-100 text-green-700' : c.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
           {c.difficulty === 'low' ? '難易度：低' : c.difficulty === 'medium' ? '難易度：中' : '難易度：高'}
         </span>
-        <button
-          onClick={e => { e.stopPropagation(); onShowChart() }}
-          className="ml-auto text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded border border-indigo-200 transition"
-        >
-          📈 高低図
-        </button>
       </div>
     </div>
   )
@@ -201,10 +230,9 @@ export default function OperationPanel() {
   const { fitBounds, panTo } = useMapStore()
   const [latStr, setLatStr] = useState('')
   const [lngStr, setLngStr] = useState('')
-  const [chartCandidateId, setChartCandidateId] = useState<string | null>(null)
+  const [showCompare, setShowCompare] = useState(false)
 
   const goals = points.filter(p => p.type === 'exit' || p.type === 'helipad')
-  const chartCandidate = chartCandidateId ? (candidates.find(c => c.id === chartCandidateId) ?? null) : null
   const mainRoute = routes.find(r => r.type === 'course')
 
   const setManualPosition = () => {
@@ -218,7 +246,17 @@ export default function OperationPanel() {
     <div className="flex flex-col gap-3 h-full overflow-y-auto">
       {/* ルート候補（最上部） */}
       <section className="flex-1">
-        <div className="text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">▼ ルート候補</div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-xs font-bold text-gray-700 uppercase tracking-wide">▼ ルート候補</div>
+          {candidates.length > 0 && (
+            <button
+              onClick={() => setShowCompare(true)}
+              className="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded border border-indigo-200 transition"
+            >
+              📈 高低図
+            </button>
+          )}
+        </div>
         {!position && <p className="text-xs text-gray-400">傷病者位置を指定すると候補が表示されます</p>}
         {position && candidates.length === 0 && (
           <p className="text-xs text-orange-500">候補が見つかりません（コース上100m以内に傷病者位置を指定してください）</p>
@@ -230,7 +268,6 @@ export default function OperationPanel() {
               color={CANDIDATE_COLORS[i % CANDIDATE_COLORS.length]}
               selected={selectedCandidateId === c.id}
               onSelect={() => selectCandidate(selectedCandidateId === c.id ? null : c.id)}
-              onShowChart={() => setChartCandidateId(c.id)}
             />
           ))}
         </div>
@@ -324,11 +361,12 @@ export default function OperationPanel() {
         ))}
       </section>
 
-      {chartCandidate && (
-        <ElevationProfileModal
-          candidate={chartCandidate}
+      {showCompare && candidates.length > 0 && (
+        <ElevationCompareModal
+          candidates={candidates}
           points={points}
-          onClose={() => setChartCandidateId(null)}
+          colors={candidates.map((_, i) => CANDIDATE_COLORS[i % CANDIDATE_COLORS.length])}
+          onClose={() => setShowCompare(false)}
         />
       )}
     </div>
