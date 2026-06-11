@@ -22,12 +22,14 @@ export const useAuthStore = create<AuthStore>((set) => ({
   init: () => {
     supabase.auth.getSession().then(({ data }) => {
       set({ user: data.session?.user ?? null, loading: false })
+    }).catch(() => {
+      set({ user: null, loading: false })
     })
     supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         set({ user: session?.user ?? null, isRecovery: true, loading: false })
       } else {
-        set({ user: session?.user ?? null })
+        set({ user: session?.user ?? null, loading: false })
       }
     })
   },
@@ -43,7 +45,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   sendPasswordReset: async (email) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'https://trail-fun.github.io/volcano/',
+      redirectTo: 'https://trail-fun.github.io/trailrunning-rescue/',
     })
     return error ? error.message : null
   },
